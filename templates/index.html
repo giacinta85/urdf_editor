@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>URDF Collision Body Editor</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+
+  <!-- Three.js r164 ES-module importmap -->
+  <script type="importmap">
+  {
+    "imports": {
+      "three":          "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js",
+      "three/addons/":  "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── Top bar ─────────────────────────────────────────────────────────── -->
+  <div id="topbar">
+    <span class="topbar-title">⬡ URDF Editor</span>
+
+    <select id="urdf-select">
+      <option value="">— 选择 URDF 文件 —</option>
+    </select>
+
+    <div class="topbar-sep"></div>
+
+    <!-- Visibility toggles -->
+    <div class="toggle-group">
+      <button class="toggle-btn active" id="btn-visuals">
+        <span class="dot dot-visual"></span>视觉网格
+      </button>
+      <button class="toggle-btn active" id="btn-cols">
+        <span class="dot dot-col"></span>碰撞体
+      </button>
+      <button class="toggle-btn active" id="btn-axes">
+        <span class="dot dot-axes"></span>关节轴
+      </button>
+    </div>
+
+    <div class="topbar-sep"></div>
+
+    <!-- Gizmo mode -->
+    <div id="mode-group">
+      <button class="mode-btn active" data-mode="translate" title="平移 (T)">T 平移</button>
+      <button class="mode-btn"        data-mode="rotate"    title="旋转 (R)">R 旋转</button>
+      <button class="mode-btn"        data-mode="scale"     title="缩放 (S)">S 缩放</button>
+    </div>
+
+    <div class="topbar-sep"></div>
+
+    <!-- Keyboard edit axis -->
+    <div id="axis-group" title="先选择方向轴，再用方向键微调；Cmd/Ctrl + ↑↓ 缩放">
+      <span class="axis-label">轴</span>
+      <button class="axis-btn active" data-axis="x" title="X 轴 (X)">X</button>
+      <button class="axis-btn"        data-axis="y" title="Y 轴 (Y)">Y</button>
+      <button class="axis-btn"        data-axis="z" title="Z 轴 (Z)">Z</button>
+    </div>
+
+    <div class="spacer"></div>
+
+    <span id="save-indicator">✓ 已保存</span>
+    <button id="btn-save" disabled>保存 URDF</button>
+  </div>
+
+  <!-- ── Main row ────────────────────────────────────────────────────────── -->
+  <div id="main-row">
+
+    <!-- Left panel: link tree -->
+    <div id="left-panel">
+      <div class="panel-header">Link 树</div>
+      <div id="link-tree"></div>
+    </div>
+
+    <!-- 3D canvas -->
+    <div id="canvas-wrap">
+      <canvas id="three-canvas"></canvas>
+      <div id="canvas-hint">左键旋转 · 右键平移 · 滚轮缩放 · 左键点击碰撞体选中</div>
+      <div id="loading-overlay">
+        <div class="spinner"></div>
+        <span id="loading-text">加载中...</span>
+      </div>
+    </div>
+
+    <!-- Right panel: property editor -->
+    <div id="right-panel">
+      <div class="panel-header">属性编辑</div>
+
+      <div id="props-content">
+        <!-- Empty state -->
+        <div id="props-empty">
+          <div class="hint-icon">◎</div>
+          <p>点击 3D 视图中的碰撞体<br/>或左侧树中的条目进行编辑</p>
+        </div>
+
+        <!-- Editor (hidden until selection) -->
+        <div id="props-editor" style="display:none">
+
+          <!-- ── Origin ──────────────────────────────────────────────────── -->
+          <div class="section-title">位置 Origin</div>
+          <div class="field-grid">
+            <div class="field"><label>X (m)</label><input type="number" id="p-ox" step="0.001" /></div>
+            <div class="field"><label>Y (m)</label><input type="number" id="p-oy" step="0.001" /></div>
+            <div class="field"><label>Z (m)</label><input type="number" id="p-oz" step="0.001" /></div>
+          </div>
+          <div class="field-grid">
+            <div class="field"><label>Roll (rad)</label><input type="number" id="p-or" step="0.01" /></div>
+            <div class="field"><label>Pitch (rad)</label><input type="number" id="p-op" step="0.01" /></div>
+            <div class="field"><label>Yaw (rad)</label><input type="number" id="p-oy2" step="0.01" /></div>
+          </div>
+
+          <div class="section-divider"></div>
+
+          <!-- ── Geometry ────────────────────────────────────────────────── -->
+          <div class="section-title">几何体 Geometry</div>
+          <div class="field-grid-1">
+            <div class="field">
+              <label>类型</label>
+              <select id="p-gtype">
+                <option value="box">Box 长方体</option>
+                <option value="cylinder">Cylinder 圆柱</option>
+                <option value="sphere">Sphere 球体</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Box params -->
+          <div id="params-box" class="field-grid">
+            <div class="field"><label>Size X</label><input type="number" id="p-bx" step="0.001" min="0.001" /></div>
+            <div class="field"><label>Size Y</label><input type="number" id="p-by" step="0.001" min="0.001" /></div>
+            <div class="field"><label>Size Z</label><input type="number" id="p-bz" step="0.001" min="0.001" /></div>
+          </div>
+
+          <!-- Cylinder params -->
+          <div id="params-cylinder" class="field-grid-2" style="display:none">
+            <div class="field"><label>Radius</label><input type="number" id="p-cr" step="0.001" min="0.001" /></div>
+            <div class="field"><label>Length</label><input type="number" id="p-cl" step="0.001" min="0.001" /></div>
+          </div>
+
+          <!-- Sphere params -->
+          <div id="params-sphere" class="field-grid-1" style="display:none">
+            <div class="field"><label>Radius</label><input type="number" id="p-sr" step="0.001" min="0.001" /></div>
+          </div>
+
+          <div class="section-divider"></div>
+
+          <!-- ── Actions ────────────────────────────────────────────────── -->
+          <div class="props-actions">
+            <button id="btn-duplicate">⊕ 复制</button>
+            <button id="btn-delete-col">🗑 删除</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Shortcut hints -->
+      <div id="shortcut-hints">
+        <div class="hint"><kbd>T</kbd> 平移</div>
+        <div class="hint"><kbd>R</kbd> 旋转</div>
+        <div class="hint"><kbd>S</kbd> 缩放</div>
+        <div class="hint"><kbd>Esc</kbd> 取消选中</div>
+        <div class="hint"><kbd>Del</kbd> 删除</div>
+      </div>
+    </div>
+
+  </div><!-- /#main-row -->
+</div><!-- /#app -->
+
+<!-- Hidden popup for add-collision type -->
+<div id="add-popup" class="add-popup" style="display:none">
+  <div class="add-popup-item" data-type="box">📦 Box 长方体</div>
+  <div class="add-popup-item" data-type="cylinder">⬭ Cylinder 圆柱</div>
+  <div class="add-popup-item" data-type="sphere">⬤ Sphere 球体</div>
+</div>
+
+<script type="module" src="/static/js/app.js"></script>
+</body>
+</html>
