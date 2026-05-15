@@ -10,7 +10,7 @@ import os
 app = Flask(__name__)
 
 BASE_DIR   = Path(__file__).parent
-ASSETS_DIR = BASE_DIR / "lumos_assets"
+ASSETS_DIR = BASE_DIR / "robots"
 
 
 def _safe_path(rel: str) -> Path:
@@ -32,7 +32,7 @@ def index():
 
 @app.route("/api/files")
 def list_files():
-    """List all URDF files under lumos_assets/."""
+    """List all URDF files under robots/."""
     files = []
     for urdf in sorted(ASSETS_DIR.rglob("*.urdf")):
         rel = str(urdf.relative_to(ASSETS_DIR))
@@ -73,7 +73,7 @@ def save_urdf():
 
 @app.route("/mesh/<path:filepath>")
 def serve_mesh(filepath: str):
-    """Serve STL / mesh files from lumos_assets/."""
+    """Serve STL / mesh files from robots/."""
     full = _safe_path(filepath)
     if not full.exists():
         abort(404)

@@ -4,7 +4,7 @@
 
 ## 功能
 
-- 加载本地 `lumos_assets/` 下的 `.urdf` 文件
+- 加载本地 `robots/` 下的 `.urdf` 文件
 - 显示机器人 STL 视觉网格和 collision 几何体
 - 支持选中 collision 后进行：
   - 平移
@@ -92,20 +92,21 @@ http://localhost:5173
 默认读取：
 
 ```text
-lumos_assets/
+robots/
 ```
 
-该目录通常包含大量 URDF / STL / mesh 文件，已在 `.gitignore` 中忽略，不会上传到 GitHub。
+其中 `robots/` 目录会上传到 GitHub；但 `robots/lumos_assets/` 通常包含大量 URDF / STL / mesh 文件，已在 `.gitignore` 中忽略，不会上传到主仓库。
 
 目录示例：
 
 ```text
-lumos_assets/
-  robot_name/
-    urdf/
-      robot.urdf
-    meshes/
-      xxx.stl
+robots/
+  lumos_assets/        # ignored
+    robot_name/
+      urdf/
+        robot.urdf
+      meshes/
+        xxx.stl
 ```
 
 ## 保存策略
@@ -129,5 +130,5 @@ lumos_assets/
 ## 注意事项
 
 - 浏览器需要能访问 Three.js CDN
-- `lumos_assets/` 不会被提交，请在本地自行放置机器人资产
+- `robots/lumos_assets/` 不会被提交到主仓库，请在本地自行放置或单独同步机器人资产
 - 当前主要支持 box / cylinder / sphere 三类简化 collision 几何体

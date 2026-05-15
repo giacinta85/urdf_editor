@@ -112,7 +112,7 @@ function isInsideComment(xmlStr, pos) {
 // ── Mesh path resolver ─────────────────────────────────────────────────────
 
 /**
- * Given the URDF's relative path (from lumos_assets/) and a mesh filename
+ * Given the URDF's relative path (from robots/) and a mesh filename
  * (from the XML, e.g. "../meshes/pelvis.STL"), return the URL path to
  * request from Flask /mesh/<path>.
  */

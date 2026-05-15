@@ -19,6 +19,9 @@ env/
 
 # Local robot assets: large/private URDF meshes and model files
 lumos_assets/
+robots/lumos_assets/
+!robots/
+!robots/.gitkeep
 
 # Runtime / output
 outputs/
