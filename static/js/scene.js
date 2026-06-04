@@ -7,20 +7,13 @@ import { OrbitControls }  from 'three/addons/controls/OrbitControls.js';
 import { STLLoader }      from 'three/addons/loaders/STLLoader.js';
 import { originToMatrix4 } from './urdf_parser.js';
 
-// ── Per-link colour palette (for collision body tinting) ───────────────────
-const LINK_PALETTE = [
-  0x4d9eff, 0x50d4a0, 0xf59e1b, 0xe05252, 0xb06cff,
-  0xff7c50, 0x3ecfcf, 0xf0c060, 0x80d080, 0xff80c0
-];
-const _linkColorCache = {};
-let   _palIdx = 0;
-
-function linkColor(linkName) {
-  if (!_linkColorCache[linkName]) {
-    _linkColorCache[linkName] = LINK_PALETTE[_palIdx++ % LINK_PALETTE.length];
-  }
-  return _linkColorCache[linkName];
-}
+const DEFAULT_COLLISION_COLOR = 0xffd400;
+const SELECTED_HIGHLIGHT_COLOR = 0x00d4ff;
+const SELECTED_EMISSIVE_COLOR = 0x004455;
+const COLLISION_OPACITY = 0.34;
+const COLLISION_WIRE_OPACITY = 0.08;
+const SELECTED_COLLISION_OPACITY = 0.58;
+const SELECTED_WIRE_OPACITY = 0.35;
 
 // ── Build Three.js geometry from collision data ────────────────────────────
 
@@ -47,7 +40,7 @@ export function buildCollisionMesh(col, color) {
   const solidMat = new THREE.MeshPhongMaterial({
     color,
     transparent: true,
-    opacity: 0.38,
+    opacity: COLLISION_OPACITY,
     side: THREE.DoubleSide,
     depthWrite: false
   });
@@ -55,7 +48,7 @@ export function buildCollisionMesh(col, color) {
     color,
     wireframe: true,
     transparent: true,
-    opacity: 0.7
+    opacity: COLLISION_WIRE_OPACITY
   });
 
   const solidMesh = new THREE.Mesh(geom, solidMat);
@@ -87,9 +80,14 @@ export class URDFScene {
     this._showVisuals    = true;
     this._showCollisions = true;
     this._showAxes       = true;
+    this._visualOpacity  = 0.35;
+    this._collisionColor = DEFAULT_COLLISION_COLOR;
     this._axesHelpers    = [];
     this._onClickCb      = null;
+    this._onCreateCb     = null;
+    this._onViewExitCb   = null;
     this._linkWorldTs    = {};  // linkName → Matrix4
+    this._axisViewActive = false;
 
     this._init();
   }
@@ -110,8 +108,8 @@ export class URDFScene {
 
     // Scene
     this._scene = new THREE.Scene();
-    this._scene.background = new THREE.Color(0x13161c);
-    this._scene.fog = new THREE.Fog(0x13161c, 6, 20);
+    this._scene.background = new THREE.Color(0x111316);
+    this._scene.fog = new THREE.Fog(0x111316, 6, 20);
 
     // Camera — URDF uses Z-up, so set camera.up to Z
     this._camera = new THREE.PerspectiveCamera(50, w / h, 0.001, 100);
@@ -127,6 +125,7 @@ export class URDFScene {
     this._orbit.dampingFactor = 0.08;
     this._orbit.minDistance   = 0.05;
     this._orbit.maxDistance   = 8;
+    this._orbit.addEventListener('start', () => this._exitAxisView());
 
     // Lights
     const ambient = new THREE.AmbientLight(0xffffff, 0.6);
@@ -136,16 +135,17 @@ export class URDFScene {
     dirA.position.set(2, 4, 3);
     this._scene.add(dirA);
 
-    const dirB = new THREE.DirectionalLight(0x8888ff, 0.4);
+    const dirB = new THREE.DirectionalLight(0xc9d3df, 0.35);
     dirB.position.set(-2, -1, -2);
     this._scene.add(dirB);
 
     // Grid — lies on XY plane at Z=0 (robot stands on this plane)
-    const grid = new THREE.GridHelper(4, 40, 0x2a2f3a, 0x232830);
+    const grid = new THREE.GridHelper(4, 40, 0x343a42, 0x242930);
     // GridHelper is horizontal (XZ plane); rotate so it lies on XY plane for Z-up
     grid.rotation.x = Math.PI / 2;
     grid.position.z = 0;
     this._scene.add(grid);
+    this._grid = grid;
 
     // Raycaster
     this._raycaster = new THREE.Raycaster();
@@ -153,6 +153,8 @@ export class URDFScene {
 
     // Click handler
     this._canvas.addEventListener('pointerdown', this._onPointerDown.bind(this));
+    this._canvas.addEventListener('pointerup', this._onPointerUp.bind(this));
+    this._canvas.addEventListener('contextmenu', this._onContextMenu.bind(this));
 
     // Resize
     new ResizeObserver(() => this._onResize()).observe(this._canvas.parentElement);
@@ -167,6 +169,8 @@ export class URDFScene {
   get orbit()     { return this._orbit;    }
 
   onCollisionClick(cb) { this._onClickCb = cb; }
+  onCreateCollisionRequest(cb) { this._onCreateCb = cb; }
+  onAxisViewExit(cb) { this._onViewExitCb = cb; }
 
   // ── Load full robot ──────────────────────────────────────────────────────
 
@@ -189,6 +193,7 @@ export class URDFScene {
 
     this._selectedId  = null;
     this._linkWorldTs = {};
+    if (this._grid) this._grid.position.z = 0;
   }
 
   /**
@@ -224,10 +229,10 @@ export class URDFScene {
 
         geom.computeVertexNormals();
         const mat  = new THREE.MeshPhongMaterial({
-          color:       0xbbccdd,
+          color:       0xc3c8ce,
           transparent: true,
-          opacity:     0.28,
-          depthWrite:  false,
+          opacity:     this._visualOpacity,
+          depthWrite:  this._visualOpacity >= 1,
           side:        THREE.DoubleSide
         });
         const mesh = new THREE.Mesh(geom, mat);
@@ -238,6 +243,8 @@ export class URDFScene {
         mesh.matrix.copy(linkT.clone().multiply(visOriginT));
         mesh.matrixWorldNeedsUpdate = true;
         mesh.visible = this._showVisuals;
+        mesh.userData.linkName = linkName;
+        mesh.userData.isVisual = true;
 
         this._scene.add(mesh);
         if (!this._stlMeshes[linkName]) this._stlMeshes[linkName] = [];
@@ -260,6 +267,9 @@ export class URDFScene {
       this._axesHelpers.push(axes);
     }
 
+    const bounds = this._computeRobotBounds(false);
+    this._updateGroundPlane(bounds);
+
     // Auto-fit camera
     this._fitCamera();
   }
@@ -267,7 +277,7 @@ export class URDFScene {
   // ── Collision mesh management ────────────────────────────────────────────
 
   addCollisionMesh(linkName, col, linkWorldT) {
-    const color = linkColor(linkName);
+    const color = this._collisionColor;
     const { group, solidMesh, wireMesh } = buildCollisionMesh(col, color);
     group.matrix.copy(collisionWorldMatrix(linkWorldT, col));
     group.matrixWorldNeedsUpdate = true;
@@ -293,7 +303,7 @@ export class URDFScene {
     if (!existing) return null;
 
     const isSelected = this._selectedId === col.id;
-    const color = isSelected ? 0xffdd00 : linkColor(existing.solidMesh.userData.linkName);
+    const color = this._collisionColor;
 
     // Remove old group
     const linkName = existing.solidMesh.userData.linkName;
@@ -311,8 +321,10 @@ export class URDFScene {
     wireMesh.userData.linkName     = linkName;
 
     if (isSelected) {
-      solidMesh.material.emissive = new THREE.Color(0x554400);
-      wireMesh.material.color.setHex(0xffdd00);
+      solidMesh.material.emissive = new THREE.Color(SELECTED_EMISSIVE_COLOR);
+      solidMesh.material.opacity = SELECTED_COLLISION_OPACITY;
+      wireMesh.material.color.setHex(SELECTED_HIGHLIGHT_COLOR);
+      wireMesh.material.opacity = SELECTED_WIRE_OPACITY;
     }
 
     this._scene.add(group);
@@ -341,8 +353,11 @@ export class URDFScene {
 
     const obj = this._objects[id];
     if (!obj) return;
-    obj.solidMesh.material.emissive = new THREE.Color(0x554400);
-    obj.wireMesh.material.color.setHex(0xffdd00);
+    obj.solidMesh.material.emissive = new THREE.Color(SELECTED_EMISSIVE_COLOR);
+    obj.solidMesh.material.color.setHex(this._collisionColor);
+    obj.solidMesh.material.opacity = SELECTED_COLLISION_OPACITY;
+    obj.wireMesh.material.color.setHex(SELECTED_HIGHLIGHT_COLOR);
+    obj.wireMesh.material.opacity = SELECTED_WIRE_OPACITY;
   }
 
   deselectCollision() {
@@ -354,10 +369,11 @@ export class URDFScene {
     if (!this._selectedId) return;
     const obj = this._objects[this._selectedId];
     if (!obj) return;
-    const origColor = linkColor(obj.solidMesh.userData.linkName);
     obj.solidMesh.material.emissive = new THREE.Color(0x000000);
-    obj.solidMesh.material.color.setHex(origColor);
-    obj.wireMesh.material.color.setHex(origColor);
+    obj.solidMesh.material.color.setHex(this._collisionColor);
+    obj.solidMesh.material.opacity = COLLISION_OPACITY;
+    obj.wireMesh.material.color.setHex(this._collisionColor);
+    obj.wireMesh.material.opacity = COLLISION_WIRE_OPACITY;
   }
 
   // ── Visibility toggles ───────────────────────────────────────────────────
@@ -369,10 +385,42 @@ export class URDFScene {
     }
   }
 
+  setVisualOpacity(opacity) {
+    this._visualOpacity = Math.max(0.05, Math.min(1, opacity));
+    for (const meshes of Object.values(this._stlMeshes)) {
+      for (const m of meshes) {
+        m.material.opacity = this._visualOpacity;
+        m.material.transparent = this._visualOpacity < 1;
+        m.material.depthWrite = this._visualOpacity >= 1;
+        m.material.needsUpdate = true;
+      }
+    }
+  }
+
   setCollisionsVisible(v) {
     this._showCollisions = v;
     for (const { group } of Object.values(this._objects)) {
       group.visible = v;
+    }
+  }
+
+  setCollisionColor(color) {
+    this._collisionColor = new THREE.Color(color).getHex();
+    for (const [id, obj] of Object.entries(this._objects)) {
+      obj.solidMesh.material.color.setHex(this._collisionColor);
+      obj.wireMesh.material.color.setHex(this._collisionColor);
+      if (id === this._selectedId) {
+        obj.solidMesh.material.emissive = new THREE.Color(SELECTED_EMISSIVE_COLOR);
+        obj.solidMesh.material.opacity = SELECTED_COLLISION_OPACITY;
+        obj.wireMesh.material.color.setHex(SELECTED_HIGHLIGHT_COLOR);
+        obj.wireMesh.material.opacity = SELECTED_WIRE_OPACITY;
+      } else {
+        obj.solidMesh.material.emissive = new THREE.Color(0x000000);
+        obj.solidMesh.material.opacity = COLLISION_OPACITY;
+        obj.wireMesh.material.opacity = COLLISION_WIRE_OPACITY;
+      }
+      obj.solidMesh.material.needsUpdate = true;
+      obj.wireMesh.material.needsUpdate = true;
     }
   }
 
@@ -381,20 +429,84 @@ export class URDFScene {
     for (const a of this._axesHelpers) a.visible = v;
   }
 
+  setViewAxis(axis) {
+    const box = this._selectedBounds() || this._computeRobotBounds(true);
+    if (box.isEmpty()) return;
+    const center = box.getCenter(new THREE.Vector3());
+    const size = box.getSize(new THREE.Vector3());
+    const dist = Math.max(Math.max(size.x, size.y, size.z) * 3, 0.25);
+
+    if (axis === 'x') {
+      this._camera.up.set(0, 0, 1);
+      this._camera.position.set(center.x + dist, center.y, center.z);
+    } else if (axis === 'y') {
+      this._camera.up.set(0, 0, 1);
+      this._camera.position.set(center.x, center.y - dist, center.z);
+    } else {
+      this._camera.up.set(0, 1, 0);
+      this._camera.position.set(center.x, center.y, center.z + dist);
+    }
+    this._orbit.object.up.copy(this._camera.up);
+    this._orbit.target.copy(center);
+    this._camera.lookAt(center);
+    this._orbit.update();
+    this._axisViewActive = true;
+  }
+
+  _exitAxisView() {
+    if (!this._axisViewActive) return;
+    this._axisViewActive = false;
+    this._camera.up.set(0, 0, 1);
+    this._orbit.object.up.copy(this._camera.up);
+    if (this._onViewExitCb) this._onViewExitCb();
+  }
+
+  _selectedBounds() {
+    if (!this._selectedId) return null;
+    const obj = this._objects[this._selectedId];
+    if (!obj) return null;
+    obj.group.updateMatrixWorld(true);
+    const box = new THREE.Box3().setFromObject(obj.group);
+    return box.isEmpty() ? null : box;
+  }
+
+  getMagnetSnapDelta(id, linkName = null, threshold = 0.1) {
+    const obj = this._objects[id];
+    if (!obj) return null;
+
+    let robotBox = this._computeVisualBounds(linkName);
+    if (robotBox.isEmpty() && linkName) robotBox = this._computeVisualBounds();
+    if (robotBox.isEmpty()) return null;
+
+    obj.group.updateMatrixWorld(true);
+    const colBox = new THREE.Box3().setFromObject(obj.group);
+    if (colBox.isEmpty()) return null;
+
+    const axes = ['x', 'y', 'z'];
+    let best = null;
+    for (const axis of axes) {
+      const deltas = [
+        robotBox.min[axis] - colBox.max[axis],
+        robotBox.max[axis] - colBox.min[axis]
+      ];
+      for (const d of deltas) {
+        const dist = Math.abs(d);
+        if (dist > threshold) continue;
+        if (!best || dist < best.dist) best = { axis, delta: d, dist };
+      }
+    }
+    if (!best) return null;
+
+    const delta = new THREE.Vector3();
+    delta[best.axis] = best.delta;
+    return delta;
+  }
+
   // ── Camera helpers ────────────────────────────────────────────────────────
 
   _fitCamera() {
     // Compute bounding box — prefer STL meshes for tighter fit, fall back to collision bodies
-    const box = new THREE.Box3();
-    for (const meshes of Object.values(this._stlMeshes)) {
-      for (const m of meshes) { m.updateMatrixWorld(true); box.expandByObject(m); }
-    }
-    if (box.isEmpty()) {
-      for (const { group } of Object.values(this._objects)) {
-        group.updateMatrixWorld(true);
-        box.expandByObject(group);
-      }
-    }
+    const box = this._computeRobotBounds(true);
     if (box.isEmpty()) return;
 
     const center = box.getCenter(new THREE.Vector3());
@@ -412,6 +524,40 @@ export class URDFScene {
     this._orbit.update();
   }
 
+  _computeRobotBounds(preferVisuals) {
+    const box = new THREE.Box3();
+    for (const meshes of Object.values(this._stlMeshes)) {
+      for (const m of meshes) {
+        m.updateMatrixWorld(true);
+        box.expandByObject(m);
+      }
+    }
+    if (!preferVisuals || box.isEmpty()) {
+      for (const { group } of Object.values(this._objects)) {
+        group.updateMatrixWorld(true);
+        box.expandByObject(group);
+      }
+    }
+    return box;
+  }
+
+  _computeVisualBounds(linkName = null) {
+    const box = new THREE.Box3();
+    const meshGroups = linkName ? [this._stlMeshes[linkName] || []] : Object.values(this._stlMeshes);
+    for (const meshes of meshGroups) {
+      for (const m of meshes) {
+        m.updateMatrixWorld(true);
+        box.expandByObject(m);
+      }
+    }
+    return box;
+  }
+
+  _updateGroundPlane(box) {
+    if (!this._grid || box.isEmpty()) return;
+    this._grid.position.z = box.min.z;
+  }
+
   focusOnLink(linkName) {
     const worldT = this._linkWorldTs[linkName];
     if (!worldT) return;
@@ -425,7 +571,14 @@ export class URDFScene {
     const pos = new THREE.Vector3();
     obj.group.updateMatrixWorld(true);
     pos.setFromMatrixPosition(obj.group.matrixWorld);
-    this._smoothFocusTo(pos, 0.4);
+    this._centerViewOn(pos);
+  }
+
+  _centerViewOn(targetPos) {
+    const camOffset = this._camera.position.clone().sub(this._orbit.target);
+    this._orbit.target.copy(targetPos);
+    this._camera.position.copy(targetPos).add(camOffset);
+    this._orbit.update();
   }
 
   _smoothFocusTo(targetPos, shrinkFactor) {
@@ -440,11 +593,32 @@ export class URDFScene {
 
   _onPointerDown(e) {
     if (e.button !== 0) return;
-    // Only fire if not a drag (use pointerup delta check is complex; just always ray)
+    this._pointerDown = { x: e.clientX, y: e.clientY };
+  }
+
+  _onPointerUp(e) {
+    if (e.button !== 0 || !this._pointerDown) return;
+    const dx = e.clientX - this._pointerDown.x;
+    const dy = e.clientY - this._pointerDown.y;
+    this._pointerDown = null;
+    if (Math.hypot(dx, dy) > 4) return;
+
     const rect = this._canvas.getBoundingClientRect();
     this._mouse.x = ((e.clientX - rect.left) / rect.width)  * 2 - 1;
     this._mouse.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
     this._pendingClick = true;
+  }
+
+  _onContextMenu(e) {
+    e.preventDefault();
+    const hit = this._raycastAt(e, true);
+    if (!this._onCreateCb) return;
+    this._onCreateCb({
+      linkName: hit?.object.userData.linkName || null,
+      worldPoint: hit?.point || null,
+      clientX: e.clientX,
+      clientY: e.clientY
+    });
   }
 
   _checkRaycast() {
@@ -452,18 +626,39 @@ export class URDFScene {
     this._pendingClick = false;
     if (!this._showCollisions) return;
 
+    const hits = this._raycastCollisions();
+    if (hits.length > 0 && this._onClickCb) {
+      const { collisionId, linkName } = hits[0].object.userData;
+      this._onClickCb(collisionId, linkName);
+    }
+  }
+
+  _raycastCollisions() {
     this._raycaster.setFromCamera(this._mouse, this._camera);
     const meshes = Object.values(this._objects)
       .filter(o => o.group.visible)
       .map(o => o.solidMesh);
+    return this._raycaster.intersectObjects(meshes, false);
+  }
 
-    const hits = this._raycaster.intersectObjects(meshes, false);
-    if (hits.length > 0 && this._onClickCb) {
-      const { collisionId, linkName } = hits[0].object.userData;
-      this._onClickCb(collisionId, linkName);
-    } else if (this._onClickCb) {
-      this._onClickCb(null, null);
+  _raycastAt(e, includeVisuals) {
+    const rect = this._canvas.getBoundingClientRect();
+    this._mouse.x = ((e.clientX - rect.left) / rect.width)  * 2 - 1;
+    this._mouse.y = -((e.clientY - rect.top)  / rect.height) * 2 + 1;
+    this._raycaster.setFromCamera(this._mouse, this._camera);
+
+    const objects = Object.values(this._objects)
+      .filter(o => o.group.visible)
+      .map(o => o.solidMesh);
+    if (includeVisuals) {
+      for (const meshes of Object.values(this._stlMeshes)) {
+        for (const m of meshes) {
+          if (m.visible) objects.push(m);
+        }
+      }
     }
+
+    return this._raycaster.intersectObjects(objects, false)[0] || null;
   }
 
   // ── Render loop ───────────────────────────────────────────────────────────

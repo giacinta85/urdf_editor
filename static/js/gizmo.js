@@ -34,7 +34,7 @@ export class CollisionGizmo {
     this._onEnd    = onTransformEnd;
 
     this._ctrl = new TransformControls(camera, renderer.domElement);
-    this._ctrl.setSize(1.2);
+    this._ctrl.setSize(0.75);
     scene.add(this._ctrl);
 
     // Disable orbit while dragging gizmo
@@ -47,7 +47,9 @@ export class CollisionGizmo {
 
     this._attachedId     = null;
     this._attachedCol    = null;  // reference to live CollisionObj
+    this._attachedGroup  = null;
     this._baseDims       = null;  // geometry snapshot when scale starts
+    this._baseMatrix     = null;  // transform snapshot for live scale preview
     this._baseOriginPos  = null;  // position snapshot for translate
     this._baseOriginRot  = null;  // quaternion snapshot for rotate
     this._mode           = 'translate';
@@ -57,6 +59,7 @@ export class CollisionGizmo {
       this._dragging = true;
       if (this._mode === 'scale' && this._attachedCol) {
         this._baseDims = { ...this._attachedCol.geometry };
+        this._baseMatrix = this._ctrl.object.matrix.clone();
       }
     });
   }
@@ -66,6 +69,7 @@ export class CollisionGizmo {
   attach(group, col) {
     this._attachedId  = col.id;
     this._attachedCol = col;
+    this._attachedGroup = group;
     this._ctrl.attach(group);
     this._applyMode(this._mode);
     this._dragging = false;
@@ -75,7 +79,9 @@ export class CollisionGizmo {
     this._ctrl.detach();
     this._attachedId  = null;
     this._attachedCol = null;
+    this._attachedGroup = null;
     this._baseDims    = null;
+    this._baseMatrix  = null;
     this._dragging    = false;
   }
 
@@ -89,13 +95,13 @@ export class CollisionGizmo {
   isAttached() { return this._attachedId !== null; }
 
   _applyMode(mode) {
-    if (mode === 'scale') {
-      this._ctrl.setMode('scale');
-      this._ctrl.showX = true;
-      this._ctrl.showY = true;
-      this._ctrl.showZ = true;
+    if (mode === 'translate' || mode === 'scale') {
+      // Movement/resize is keyboard/form-only. Hiding TransformControls avoids
+      // accidental arrow-handle drags while keeping selection active.
+      this._ctrl.detach();
     } else {
-      this._ctrl.setMode(mode); // 'translate' or 'rotate'
+      if (this._attachedGroup) this._ctrl.attach(this._attachedGroup);
+      this._ctrl.setMode(mode); // 'rotate'
     }
   }
 
@@ -121,6 +127,7 @@ export class CollisionGizmo {
     } else if (this._mode === 'scale' && this._baseDims) {
       const s = group.scale;
       this._applyScaleToDims(col, s);
+      this._applyLiveScalePreview(group, s);
       this._onChange({ id: col.id, live: true });
     }
   }
@@ -176,5 +183,12 @@ export class CollisionGizmo {
     } else {
       g.radius = Math.max(0.001, base.radius * ((Math.abs(scale.x) + Math.abs(scale.y) + Math.abs(scale.z)) / 3));
     }
+  }
+
+  _applyLiveScalePreview(group, scale) {
+    if (!this._baseMatrix) return;
+    group.matrix.copy(this._baseMatrix).scale(scale);
+    group.matrixWorldNeedsUpdate = true;
+    group.updateMatrixWorld(true);
   }
 }

@@ -29,6 +29,22 @@ const S = {
   selId:       null,
   selLink:     null,
 };
+let MAGNET_ENABLED = false;
+const SETTINGS_KEY = 'urdfEditorSettings.v1';
+
+function loadSettings() {
+  try {
+    return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {};
+  } catch {
+    return {};
+  }
+}
+
+function saveSetting(key, value) {
+  const settings = loadSettings();
+  settings[key] = value;
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+}
 
 // ── Undo stack ─────────────────────────────────────────────────────────────
 
@@ -114,6 +130,8 @@ const Props = new PropsPanel({
   onOriginChange:   _onOriginChange,
   onGeometryChange: _onGeometryChange,
   onDuplicate:      duplicateCollision,
+  onMirror:         mirrorCollision,
+  onMirrorLink:     mirrorLinkCollisions,
   onDelete:         deleteCollision
 });
 
@@ -122,10 +140,15 @@ const Props = new PropsPanel({
 async function init() {
   await fetchFileList();
   bindTopbar();
+  bindSceneCreatePopup();
   bindKeyboard();
   Scene.onCollisionClick((id, linkName) => {
     if (id) selectCollision(id, linkName);
     else    deselect();
+  });
+  Scene.onCreateCollisionRequest(showSceneCreatePopup);
+  Scene.onAxisViewExit(() => {
+    document.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
   });
   hideLoading();
 }
@@ -218,9 +241,13 @@ function deselect() {
 
 // ── Collision CRUD ─────────────────────────────────────────────────────────
 
-function addCollision(linkName, type) {
+function addCollision(linkName, type, worldPoint = null) {
   if (!S.robotData) return;
   const col = createDefaultCollision(type);
+  if (worldPoint && S.fkT[linkName]) {
+    const localPoint = worldPoint.clone().applyMatrix4(S.fkT[linkName].clone().invert());
+    col.origin.xyz = { x: localPoint.x, y: localPoint.y, z: localPoint.z };
+  }
   S.robotData.links[linkName].collisions.push(col);
   // Push undo: to undo this add, the col should be marked deleted
   _pushUndo(col, linkName, true);
@@ -267,6 +294,70 @@ function duplicateCollision(id) {
   Scene.addCollisionMesh(S.selLink, newCol, S.fkT[S.selLink]);
   Tree.render(S.robotData, newCol.id);
   selectCollision(newCol.id, S.selLink);
+}
+
+function mirrorCollision(id) {
+  if (!S.robotData) return;
+  const srcCol = _getCollision(id);
+  const srcLinkName = _findLinkOfCollision(id);
+  if (!srcCol || !srcLinkName) return;
+
+  const dstLinkName = _pairedLinkName(srcLinkName, S.robotData.links);
+  if (!dstLinkName) {
+    alert(`未找到 ${srcLinkName} 的对侧 link`);
+    return;
+  }
+
+  const srcIndex = _activeCollisionIndex(S.robotData.links[srcLinkName], id);
+  if (srcIndex < 0) return;
+
+  _mirrorCollisionToIndex(srcCol, dstLinkName, srcIndex);
+
+  Tree.render(S.robotData, S.selId);
+  Tree.setSelected(S.selId);
+}
+
+function mirrorLinkCollisions(id) {
+  if (!S.robotData) return;
+  const srcLinkName = _findLinkOfCollision(id);
+  if (!srcLinkName) return;
+
+  const dstLinkName = _pairedLinkName(srcLinkName, S.robotData.links);
+  if (!dstLinkName) {
+    alert(`未找到 ${srcLinkName} 的对侧 link`);
+    return;
+  }
+
+  const srcActive = S.robotData.links[srcLinkName].collisions.filter(c => !c.deleted);
+  srcActive.forEach((col, idx) => _mirrorCollisionToIndex(col, dstLinkName, idx));
+
+  Tree.render(S.robotData, S.selId);
+  Tree.setSelected(S.selId);
+}
+
+function _mirrorCollisionToIndex(srcCol, dstLinkName, dstIndex) {
+  const dstLink = S.robotData.links[dstLinkName];
+  const dstActive = dstLink.collisions.filter(c => !c.deleted);
+  const mirrored = _mirroredCollisionData(srcCol);
+  let dstCol = dstActive[dstIndex] || null;
+
+  if (dstCol) {
+    _pushUndo(dstCol, dstLinkName);
+    dstCol.origin = mirrored.origin;
+    dstCol.geometry = mirrored.geometry;
+    dstCol.dirty = true;
+    Scene.updateCollisionMesh(dstCol, S.fkT[dstLinkName]);
+    return dstCol;
+  }
+
+  dstCol = createDefaultCollision(srcCol.geometry.type);
+  dstCol.origin = mirrored.origin;
+  dstCol.geometry = mirrored.geometry;
+  dstCol.dirty = true;
+  dstLink.collisions.push(dstCol);
+  _pushUndo(dstCol, dstLinkName, true);
+  Scene.addCollisionMesh(dstLinkName, dstCol, S.fkT[dstLinkName]);
+  return dstCol;
 }
 
 // ── Origin / geometry changes from props form ──────────────────────────────
@@ -342,6 +433,7 @@ function _onGizmoEnd({ id, mode, worldPos, worldQuat, geometry, baseDims }) {
       group.matrix.copy(collisionWorldMatrix(linkWorldT, col));
       group.matrixWorldNeedsUpdate = true;
     }
+    _applyMagnetSnap(id, linkWorldT, S.selLink);
     Props.updateValues(col);
 
   } else if (mode === 'rotate' && worldQuat) {
@@ -431,23 +523,85 @@ function flashSaved() {
 // ── Top-bar bindings ───────────────────────────────────────────────────────
 
 function bindTopbar() {
+  const settings = loadSettings();
   document.getElementById('btn-save').addEventListener('click', saveURDF);
 
   // Visibility toggles
-  document.getElementById('btn-visuals').addEventListener('click', (e) => {
+  const btnVisuals = document.getElementById('btn-visuals');
+  const btnCols = document.getElementById('btn-cols');
+  const btnAxes = document.getElementById('btn-axes');
+  const btnMagnet = document.getElementById('btn-magnet');
+  const opacityInput = document.getElementById('visual-opacity');
+  const opacityValue = document.getElementById('visual-opacity-value');
+  const collisionColorInput = document.getElementById('collision-color');
+
+  if (settings.visualsVisible !== undefined) {
+    btnVisuals.classList.toggle('active', settings.visualsVisible);
+    Scene.setVisualsVisible(settings.visualsVisible);
+  }
+  if (settings.collisionsVisible !== undefined) {
+    btnCols.classList.toggle('active', settings.collisionsVisible);
+    Scene.setCollisionsVisible(settings.collisionsVisible);
+  }
+  if (settings.axesVisible !== undefined) {
+    btnAxes.classList.toggle('active', settings.axesVisible);
+    Scene.setAxesVisible(settings.axesVisible);
+  }
+  if (settings.magnetEnabled !== undefined) {
+    MAGNET_ENABLED = settings.magnetEnabled;
+    btnMagnet.classList.toggle('active', MAGNET_ENABLED);
+  }
+  if (settings.visualOpacity !== undefined) {
+    const pct = Math.round(settings.visualOpacity * 100);
+    opacityInput.value = String(pct);
+    opacityValue.textContent = `${pct}%`;
+    Scene.setVisualOpacity(settings.visualOpacity);
+  }
+  if (settings.collisionColor) {
+    collisionColorInput.value = settings.collisionColor;
+    Scene.setCollisionColor(settings.collisionColor);
+  }
+
+  btnVisuals.addEventListener('click', (e) => {
     const btn = e.currentTarget;
     btn.classList.toggle('active');
-    Scene.setVisualsVisible(btn.classList.contains('active'));
+    const active = btn.classList.contains('active');
+    Scene.setVisualsVisible(active);
+    saveSetting('visualsVisible', active);
   });
-  document.getElementById('btn-cols').addEventListener('click', (e) => {
+  btnCols.addEventListener('click', (e) => {
     const btn = e.currentTarget;
     btn.classList.toggle('active');
-    Scene.setCollisionsVisible(btn.classList.contains('active'));
+    const active = btn.classList.contains('active');
+    Scene.setCollisionsVisible(active);
+    saveSetting('collisionsVisible', active);
   });
-  document.getElementById('btn-axes').addEventListener('click', (e) => {
+  collisionColorInput.addEventListener('input', (e) => {
+    const color = e.currentTarget.value;
+    Scene.setCollisionColor(color);
+    saveSetting('collisionColor', color);
+  });
+  btnAxes.addEventListener('click', (e) => {
     const btn = e.currentTarget;
     btn.classList.toggle('active');
-    Scene.setAxesVisible(btn.classList.contains('active'));
+    const active = btn.classList.contains('active');
+    Scene.setAxesVisible(active);
+    saveSetting('axesVisible', active);
+  });
+
+  btnMagnet.addEventListener('click', (e) => {
+    const btn = e.currentTarget;
+    btn.classList.toggle('active');
+    MAGNET_ENABLED = btn.classList.contains('active');
+    saveSetting('magnetEnabled', MAGNET_ENABLED);
+  });
+
+  opacityInput.addEventListener('input', () => {
+    const pct = parseInt(opacityInput.value, 10);
+    opacityValue.textContent = `${pct}%`;
+    const opacity = pct / 100;
+    Scene.setVisualOpacity(opacity);
+    saveSetting('visualOpacity', opacity);
   });
 
   // Gizmo mode buttons
@@ -464,6 +618,45 @@ function bindTopbar() {
   document.querySelectorAll('.axis-btn').forEach(btn => {
     btn.addEventListener('click', () => setEditAxis(btn.dataset.axis));
   });
+
+  document.querySelectorAll('.view-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.view-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      Scene.setViewAxis(btn.dataset.view);
+    });
+  });
+}
+
+let _pendingSceneCreate = null;
+
+function bindSceneCreatePopup() {
+  const popup = document.getElementById('add-popup');
+  popup.querySelectorAll('.add-popup-item').forEach(item => {
+    item.addEventListener('click', () => {
+      if (!_pendingSceneCreate) return;
+      addCollision(_pendingSceneCreate.linkName, item.dataset.type, _pendingSceneCreate.worldPoint);
+      _pendingSceneCreate = null;
+    });
+  });
+
+  document.addEventListener('pointerdown', (e) => {
+    if (!popup.contains(e.target)) _pendingSceneCreate = null;
+  });
+}
+
+function showSceneCreatePopup({ linkName, worldPoint, clientX, clientY }) {
+  const targetLink = linkName || S.selLink;
+  if (!S.robotData || !targetLink || !S.robotData.links[targetLink]) {
+    alert('请先在机器人或已有碰撞体上右键，或先选中一个 link/碰撞体');
+    return;
+  }
+
+  _pendingSceneCreate = { linkName: targetLink, worldPoint };
+  const popup = document.getElementById('add-popup');
+  popup.style.display = 'block';
+  popup.style.left = clientX + 'px';
+  popup.style.top = clientY + 'px';
 }
 
 function _currentGizmoMode() {
@@ -474,10 +667,10 @@ function _currentGizmoMode() {
 // ── Keyboard shortcuts ─────────────────────────────────────────────────────
 
 // Arrow key movement step (meters)
-const ARROW_STEP_NORMAL = 0.005;  // 5 mm
-const ARROW_STEP_FINE   = 0.001;  // 1 mm  (hold Shift)
-const SCALE_STEP_NORMAL = 0.01;   // 1 cm or radius/length equivalent
-const SCALE_STEP_FINE   = 0.002;  // 2 mm  (hold Shift)
+const ARROW_STEP_NORMAL = 0.0001;
+const ARROW_STEP_FINE   = 0.00001; // hold Shift for finer edits
+const SCALE_STEP_NORMAL = 0.0001;
+const SCALE_STEP_FINE   = 0.00001; // hold Shift for finer edits
 
 let EDIT_AXIS = 'x';
 
@@ -504,13 +697,21 @@ function _arrowMove(key, shift, scaleMode) {
     return;
   }
 
-  const sign = (key === 'ArrowUp' || key === 'ArrowRight') ? 1 : -1;
-  const step = sign * (shift ? ARROW_STEP_FINE : ARROW_STEP_NORMAL);
+  const step = shift ? ARROW_STEP_FINE : ARROW_STEP_NORMAL;
+  const deltaByKey = {
+    ArrowUp:    { axis: 'x', delta:  step },
+    ArrowDown:  { axis: 'x', delta: -step },
+    ArrowLeft:  { axis: 'y', delta:  step },
+    ArrowRight: { axis: 'y', delta: -step }
+  };
+  const move = deltaByKey[key];
+  if (!move) return;
 
   _pushUndoDeduped(col, S.selLink);
-  col.origin.xyz[EDIT_AXIS] += step;
+  col.origin.xyz[move.axis] += move.delta;
   col.dirty = true;
-  _scheduleRebuild(S.selId);
+  _rebuildMesh(S.selId);
+  _applyMagnetSnap(S.selId, S.fkT[S.selLink], S.selLink);
   Props.updateValues(col);
 }
 
@@ -522,10 +723,30 @@ function _scaleCollisionOnAxis(col, axis, delta) {
   } else if (g.type === 'cylinder') {
     // URDF cylinder local Z is length; X/Y affect radius
     if (axis === 'z') g.length = Math.max(0.001, g.length + delta);
-    else              g.radius = Math.max(0.001, g.radius + delta * 0.5);
+    else              g.radius = Math.max(0.001, g.radius + delta);
   } else if (g.type === 'sphere') {
-    g.radius = Math.max(0.001, g.radius + delta * 0.5);
+    g.radius = Math.max(0.001, g.radius + delta);
   }
+}
+
+function _applyMagnetSnap(id, linkWorldT, linkName) {
+  if (!MAGNET_ENABLED) return false;
+  const delta = Scene.getMagnetSnapDelta(id, linkName);
+  if (!delta || delta.lengthSq() === 0) return false;
+
+  const col = _getCollision(id);
+  const group = Scene.getCollisionGroup(id);
+  if (!col || !group) return false;
+
+  group.updateMatrixWorld(true);
+  const worldPos = new THREE.Vector3().setFromMatrixPosition(group.matrixWorld).add(delta);
+  const localPos = worldPos.applyMatrix4(linkWorldT.clone().invert());
+  col.origin.xyz = { x: localPos.x, y: localPos.y, z: localPos.z };
+  col.dirty = true;
+
+  group.matrix.copy(collisionWorldMatrix(linkWorldT, col));
+  group.matrixWorldNeedsUpdate = true;
+  return true;
 }
 
 function bindKeyboard() {
@@ -540,13 +761,13 @@ function bindKeyboard() {
     // Don't fire shortcuts when typing in inputs
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
 
-    // Arrow keys: edit selected collision body on the selected axis.
-    // ↑/→ = positive direction, ↓/← = negative direction.
-    // Cmd/Ctrl + ↑/↓ = scale on selected axis.
+    // Arrow keys: edit selected collision body.
+    // Translate mode: ↑/↓ forward-back (X), ←/→ left-right (Y).
+    // Scale mode or Cmd/Ctrl + ↑/↓: resize on selected axis.
     if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) {
       if (S.selId) {
         e.preventDefault();  // prevent page scroll
-        _arrowMove(e.key, e.shiftKey, e.metaKey || e.ctrlKey);
+        _arrowMove(e.key, e.shiftKey, _currentGizmoMode() === 'scale' || e.metaKey || e.ctrlKey);
       }
       return;
     }
@@ -609,6 +830,46 @@ function _findLinkOfCollision(id) {
     if (link.collisions.some(c => c.id === id)) return linkName;
   }
   return null;
+}
+
+function _activeCollisionIndex(link, id) {
+  return link.collisions.filter(c => !c.deleted).findIndex(c => c.id === id);
+}
+
+function _pairedLinkName(linkName, links) {
+  const pairs = [
+    [/^left_/, 'right_'],
+    [/^right_/, 'left_'],
+    [/_left_/, '_right_'],
+    [/_right_/, '_left_'],
+    [/_left$/, '_right'],
+    [/_right$/, '_left'],
+    [/^Left_/, 'Right_'],
+    [/^Right_/, 'Left_'],
+    [/^L_/, 'R_'],
+    [/^R_/, 'L_']
+  ];
+
+  for (const [pattern, replacement] of pairs) {
+    if (!pattern.test(linkName)) continue;
+    const candidate = linkName.replace(pattern, replacement);
+    if (links[candidate]) return candidate;
+  }
+  return null;
+}
+
+function _mirroredCollisionData(col) {
+  return {
+    origin: {
+      xyz: {
+        x: col.origin.xyz.x,
+        y: -col.origin.xyz.y,
+        z: col.origin.xyz.z
+      },
+      rpy: { ...col.origin.rpy }
+    },
+    geometry: { ...col.geometry }
+  };
 }
 
 // ── Boot ───────────────────────────────────────────────────────────────────

@@ -7,15 +7,19 @@
 
 export class PropsPanel {
   /**
-   * @param {function} onOriginChange   (id, origin)
-   * @param {function} onGeometryChange (id, geometry)
-   * @param {function} onDuplicate      (id)
-   * @param {function} onDelete         (id)
-   */
-  constructor({ onOriginChange, onGeometryChange, onDuplicate, onDelete }) {
+ * @param {function} onOriginChange   (id, origin)
+ * @param {function} onGeometryChange (id, geometry)
+ * @param {function} onDuplicate      (id)
+ * @param {function} onMirror         (id)
+ * @param {function} onMirrorLink     (id)
+ * @param {function} onDelete         (id)
+ */
+  constructor({ onOriginChange, onGeometryChange, onDuplicate, onMirror, onMirrorLink, onDelete }) {
     this._onOriginChange   = onOriginChange;
     this._onGeometryChange = onGeometryChange;
     this._onDuplicate      = onDuplicate;
+    this._onMirror         = onMirror;
+    this._onMirrorLink     = onMirrorLink;
     this._onDelete         = onDelete;
 
     this._currentId = null;
@@ -55,6 +59,12 @@ export class PropsPanel {
     // Buttons
     document.getElementById('btn-duplicate').addEventListener('click', () => {
       if (this._currentId) this._onDuplicate(this._currentId);
+    });
+    document.getElementById('btn-mirror-col').addEventListener('click', () => {
+      if (this._currentId) this._onMirror(this._currentId);
+    });
+    document.getElementById('btn-mirror-link').addEventListener('click', () => {
+      if (this._currentId) this._onMirrorLink(this._currentId);
     });
     document.getElementById('btn-delete-col').addEventListener('click', () => {
       if (this._currentId) this._onDelete(this._currentId);

@@ -2,19 +2,19 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg0: #1a1d22;
-  --bg1: #22262e;
-  --bg2: #2a2f3a;
-  --bg3: #323844;
-  --border: #3a4050;
-  --text: #d4d8e0;
-  --text-dim: #7a8090;
+  --bg0: #17191c;
+  --bg1: #202327;
+  --bg2: #292d32;
+  --bg3: #343941;
+  --border: #3a4048;
+  --text: #d7dade;
+  --text-dim: #8b929b;
   --text-hi: #ffffff;
-  --accent: #4d9eff;
-  --accent2: #50d4a0;
-  --warn: #f59e1b;
-  --danger: #e05252;
-  --sel: #4d9eff33;
+  --accent: #7fa7c9;
+  --accent2: #8aa59a;
+  --warn: #c9a45f;
+  --danger: #c46b6b;
+  --sel: #7fa7c933;
   --panel-w: 260px;
   --props-w: 290px;
   --topbar-h: 44px;
@@ -45,7 +45,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg0)
   overflow: hidden;
 }
 
-#canvas-wrap { flex: 1; position: relative; overflow: hidden; background: #13161c; }
+#canvas-wrap { flex: 1; position: relative; overflow: hidden; background: #111316; }
 #three-canvas { display: block; width: 100%; height: 100%; }
 
 #right-panel {
@@ -79,9 +79,30 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg0)
 .toggle-btn:hover:not(.active) { border-color: var(--accent); color: var(--accent); }
 
 .dot { width: 7px; height: 7px; border-radius: 50%; }
-.dot-visual  { background: #8899cc; }
-.dot-col     { background: #50d4a0; }
-.dot-axes    { background: #f59e1b; }
+.dot-visual  { background: #a7b1ba; }
+.dot-col     { background: #ffd400; }
+.dot-axes    { background: #c9a45f; }
+
+.color-control {
+  width: 26px; height: 24px; display: flex; align-items: center; justify-content: center;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--bg2); cursor: pointer;
+}
+.color-control input {
+  width: 18px; height: 18px; padding: 0; border: none;
+  background: transparent; cursor: pointer;
+}
+
+.opacity-control {
+  display: flex; align-items: center; gap: 6px;
+  color: var(--text-dim); font-size: 11px; white-space: nowrap;
+}
+.opacity-control input {
+  width: 82px; accent-color: var(--accent);
+}
+#visual-opacity-value {
+  width: 32px; color: var(--text); font-variant-numeric: tabular-nums;
+}
 
 #mode-group { display: flex; gap: 2px; }
 .mode-btn {
@@ -94,11 +115,12 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg0)
 .mode-btn:hover:not(.active) { border-color: var(--warn); color: var(--warn); }
 
 #axis-group { display: flex; align-items: center; gap: 3px; }
+#view-group { display: flex; align-items: center; gap: 3px; }
 .axis-label {
   color: var(--text-dim); font-size: 11px; font-weight: 700;
   margin-right: 2px;
 }
-.axis-btn {
+.axis-btn, .view-btn {
   width: 24px; height: 24px; border-radius: var(--radius);
   border: 1px solid var(--border); background: var(--bg2);
   color: var(--text-dim); cursor: pointer; font-size: 11px; font-weight: 800;
@@ -106,6 +128,8 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg0)
 }
 .axis-btn.active { background: var(--accent2); border-color: var(--accent2); color: #102018; }
 .axis-btn:hover:not(.active) { border-color: var(--accent2); color: var(--accent2); }
+.view-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+.view-btn:hover:not(.active) { border-color: var(--accent); color: var(--accent); }
 
 .spacer { flex: 1; }
 
@@ -115,7 +139,7 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg0)
   font-weight: 600; font-size: 12px; cursor: pointer;
   transition: all 0.15s;
 }
-#btn-save:hover { background: #66aaff; }
+#btn-save:hover { background: #91b7d7; }
 #btn-save:disabled { background: var(--bg3); color: var(--text-dim); cursor: default; }
 
 #save-indicator {
@@ -251,14 +275,16 @@ html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg0)
 .field select:focus { outline: none; border-color: var(--accent); }
 
 /* ─── Property action buttons ─────────────────────────────────────────────── */
-.props-actions { display: flex; gap: 6px; margin-top: 14px; }
+.props-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 14px; }
 .props-actions button {
-  flex: 1; padding: 6px 0; border-radius: var(--radius);
+  flex: 1 1 calc(50% - 6px); padding: 6px 0; border-radius: var(--radius);
   border: 1px solid var(--border); cursor: pointer;
   font-size: 12px; font-weight: 600; transition: all 0.12s;
 }
 #btn-duplicate { background: var(--bg2); color: var(--text); }
 #btn-duplicate:hover { background: var(--accent2); border-color: var(--accent2); color: #000; }
+#btn-mirror-col { background: var(--bg2); color: var(--text); }
+#btn-mirror-col:hover { background: var(--warn); border-color: var(--warn); color: #1a1a1a; }
 #btn-delete-col { background: var(--bg2); color: var(--danger); border-color: var(--danger); }
 #btn-delete-col:hover { background: var(--danger); color: #fff; }
 

@@ -37,10 +37,19 @@
       <button class="toggle-btn active" id="btn-cols">
         <span class="dot dot-col"></span>碰撞体
       </button>
+      <label class="color-control" title="调整碰撞体颜色">
+        <input type="color" id="collision-color" value="#ffd400" />
+      </label>
       <button class="toggle-btn active" id="btn-axes">
         <span class="dot dot-axes"></span>关节轴
       </button>
     </div>
+
+    <label class="opacity-control" title="调整视觉网格透明度">
+      <span>透明度</span>
+      <input type="range" id="visual-opacity" min="5" max="100" value="35" />
+      <span id="visual-opacity-value">35%</span>
+    </label>
 
     <div class="topbar-sep"></div>
 
@@ -48,18 +57,31 @@
     <div id="mode-group">
       <button class="mode-btn active" data-mode="translate" title="平移 (T)">T 平移</button>
       <button class="mode-btn"        data-mode="rotate"    title="旋转 (R)">R 旋转</button>
-      <button class="mode-btn"        data-mode="scale"     title="缩放 (S)">S 缩放</button>
+      <button class="mode-btn"        data-mode="scale"     title="缩放模式：选轴后用 ↑↓ 调整大小 (S)">S 缩放</button>
     </div>
 
     <div class="topbar-sep"></div>
 
     <!-- Keyboard edit axis -->
-    <div id="axis-group" title="先选择方向轴，再用方向键微调；Cmd/Ctrl + ↑↓ 缩放">
+    <div id="axis-group" title="平移: ↑↓ 前后、←→ 左右；缩放: 先选轴再用 ↑↓">
       <span class="axis-label">轴</span>
       <button class="axis-btn active" data-axis="x" title="X 轴 (X)">X</button>
       <button class="axis-btn"        data-axis="y" title="Y 轴 (Y)">Y</button>
       <button class="axis-btn"        data-axis="z" title="Z 轴 (Z)">Z</button>
     </div>
+
+    <div class="topbar-sep"></div>
+
+    <div id="view-group" title="切换正交观察方向">
+      <span class="axis-label">视角</span>
+      <button class="view-btn" data-view="x" title="沿 X 轴观察">X</button>
+      <button class="view-btn" data-view="y" title="沿 Y 轴观察">Y</button>
+      <button class="view-btn" data-view="z" title="沿 Z 轴观察">Z</button>
+    </div>
+
+    <button class="toggle-btn" id="btn-magnet" title="平移结束时吸附到机器人可视网格边界">
+      磁力吸附
+    </button>
 
     <div class="spacer"></div>
 
@@ -79,7 +101,7 @@
     <!-- 3D canvas -->
     <div id="canvas-wrap">
       <canvas id="three-canvas"></canvas>
-      <div id="canvas-hint">左键旋转 · 右键平移 · 滚轮缩放 · 左键点击碰撞体选中</div>
+      <div id="canvas-hint">左键旋转 · 右键菜单创建碰撞体 · 滚轮缩放 · 点击碰撞体选中 · S 后选轴并用 ↑↓ 缩放</div>
       <div id="loading-overlay">
         <div class="spinner"></div>
         <span id="loading-text">加载中...</span>
@@ -151,6 +173,8 @@
           <!-- ── Actions ────────────────────────────────────────────────── -->
           <div class="props-actions">
             <button id="btn-duplicate">⊕ 复制</button>
+            <button id="btn-mirror-col">⇄ 镜像单个</button>
+            <button id="btn-mirror-link">⇄ 镜像 Link</button>
             <button id="btn-delete-col">🗑 删除</button>
           </div>
         </div>
