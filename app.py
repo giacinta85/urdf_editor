@@ -1,11 +1,13 @@
 """
 URDF Collision Body Visual Editor - Flask Backend
 Run: python app.py
-Open: http://localhost:5173
+Open: http://localhost:${PORT:-5173}
 """
 from flask import Flask, jsonify, request, render_template, send_file, abort, Response
 from pathlib import Path
 import os
+
+from scripts.urdf_to_mjcf import find_paths_for_urdf, generate_mjcf
 
 app = Flask(__name__)
 
@@ -69,6 +71,34 @@ def save_urdf():
     return jsonify({"ok": True})
 
 
+@app.route("/api/save_xml", methods=["POST"])
+def save_xml():
+    """Save the current URDF and generate/update its matching MJCF XML."""
+    data = request.get_json(force=True)
+    path = data.get("path", "")
+    content = data.get("content", "")
+    if not path or not content:
+        abort(400, "Missing path or content")
+
+    full = _safe_path(path)
+    if not full.exists():
+        abort(404)
+    full.write_text(content, encoding="utf-8")
+
+    try:
+        urdf_path, template_path, output_path = find_paths_for_urdf(ASSETS_DIR, path)
+        result = generate_mjcf(urdf_path, template_path, output_path)
+    except Exception as exc:
+        abort(500, str(exc))
+
+    return jsonify({
+        "ok": True,
+        "xml_path": str(result["output"]),
+        "xml_rel_path": str(Path(result["output"]).relative_to(ASSETS_DIR)),
+        "template_rel_path": str(Path(result["template"]).relative_to(ASSETS_DIR)),
+    })
+
+
 # ── Static mesh serving ────────────────────────────────────────────────────────
 
 @app.route("/mesh/<path:filepath>")
@@ -83,6 +113,7 @@ def serve_mesh(filepath: str):
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    port = int(os.environ.get("PORT", "5173"))
     print(f"[URDF Editor] Assets dir : {ASSETS_DIR}")
-    print(f"[URDF Editor] Open        : http://localhost:5173")
-    app.run(debug=True, port=5173, host="0.0.0.0")
+    print(f"[URDF Editor] Open        : http://localhost:{port}")
+    app.run(debug=True, port=port, host="0.0.0.0")

@@ -192,6 +192,7 @@ async function loadURDF(path) {
     Tree.render(S.robotData, null);
 
     document.getElementById('btn-save').disabled = false;
+    document.getElementById('btn-save-xml').disabled = false;
     showLoading('渲染 STL 中…');
     // STL loading is async inside scene; loading overlay hides on next tick
     setTimeout(hideLoading, 200);
@@ -494,7 +495,10 @@ async function saveURDF() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: S.filePath, content: newXML })
-    }).then(r => r.json());
+    }).then(async r => {
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    });
 
     // Update stored original XML + clear dirty flags
     S.originalXML = newXML;
@@ -514,8 +518,43 @@ async function saveURDF() {
   }
 }
 
-function flashSaved() {
+async function saveXML() {
+  if (!S.filePath || !S.robotData || !S.originalXML) return;
+  const btn = document.getElementById('btn-save-xml');
+  btn.disabled = true;
+  btn.textContent = '生成中…';
+
+  try {
+    const newXML = buildSaveXML(S.originalXML, S.robotData);
+    const result = await fetch('/api/save_xml', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: S.filePath, content: newXML })
+    }).then(async r => {
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    });
+
+    S.originalXML = newXML;
+    for (const link of Object.values(S.robotData.links)) {
+      for (const col of link.collisions) {
+        if (!col.deleted) col.dirty = false;
+      }
+    }
+
+    flashSaved('✓ XML 已保存: ' + result.xml_rel_path);
+  } catch (err) {
+    console.error('Save XML failed:', err);
+    alert('保存 XML 失败: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '保存 XML';
+  }
+}
+
+function flashSaved(text = '✓ 已保存') {
   const el = document.getElementById('save-indicator');
+  el.textContent = text;
   el.classList.add('visible');
   setTimeout(() => el.classList.remove('visible'), 2500);
 }
@@ -525,6 +564,7 @@ function flashSaved() {
 function bindTopbar() {
   const settings = loadSettings();
   document.getElementById('btn-save').addEventListener('click', saveURDF);
+  document.getElementById('btn-save-xml').addEventListener('click', saveXML);
 
   // Visibility toggles
   const btnVisuals = document.getElementById('btn-visuals');

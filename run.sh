@@ -5,6 +5,8 @@
 set -e
 cd "$(dirname "$0")"
 
+PORT="${PORT:-5173}"
+
 # Check if conda env is active or create it
 if ! python -c "import flask" 2>/dev/null; then
     echo "[setup] Flask not found. Creating conda env 'urdf_editor'..."
@@ -16,8 +18,15 @@ fi
 echo ""
 echo "  ╔══════════════════════════════════════╗"
 echo "  ║   URDF Collision Body Editor         ║"
-echo "  ║   Open: http://localhost:5000         ║"
+printf "  ║   Open: http://localhost:%-10s║\n" "$PORT"
 echo "  ╚══════════════════════════════════════╝"
 echo ""
 
-python app.py
+PIDS="$(lsof -ti tcp:"$PORT" || true)"
+if [ -n "$PIDS" ]; then
+    echo "[setup] Port $PORT is in use. Stopping existing process: $PIDS"
+    kill $PIDS
+    sleep 0.5
+fi
+
+PORT="$PORT" python app.py
