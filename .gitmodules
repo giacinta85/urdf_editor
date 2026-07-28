@@ -1,0 +1,4 @@
+[submodule "robots/lumos_assets"]
+	path = robots/lumos_assets
+	url = http://git.lumosbot.tech/lumosbot/locomotion/lumos_assets.git
+	branch = master
